@@ -26,8 +26,9 @@ Application mobile (Flutter, iOS + Android) qui :
 - Hypothèse forte : sur ce type de vélo, les watts de la console sont **calculés** (niveau × cadence, sans capteur de force) et non mesurés. À confirmer par le relevé de calibration (section 6).
 
 ### Matériel nécessaire
-- Un capteur de cadence **Bluetooth (BLE)** à fixer sur la manivelle (~20-40 €, type Wahoo / Garmin / Magene). Vérifier que la fiche indique bien BLE (pas seulement ANT+).
-- iPhone 15 + Mac pour développer ; plan B : Android 10 (API 29) ou plus récent (APK).
+- Capteur validé : **Van Rysel KIT202** (Decathlon), BLE et ANT+, fixé sur le boîtier de pédalier. Il est soit en vitesse, soit en cadence. LED verte = vitesse, LED rouge = cadence. On change de mode en retirant puis en remettant la pile CR2032. Il se rendort : tourner la pédale pour le réveiller avant la recherche. Le téléphone l’annonce sous un nom du type `44885-1`.
+- Un autre capteur de cadence BLE (service `0x1816`) du même genre convient. ANT+ seul ne suffit pas.
+- iPhone 15 + Mac pour développer ; usage quotidien : Android 10 (API 29) ou plus récent (APK).
 
 ---
 
@@ -39,6 +40,7 @@ Standard ouvert du Bluetooth SIG. **Aucune autorisation ni licence nécessaire**
 |---|---|
 | Service | `0x1816` (Cycling Speed and Cadence) |
 | Caractéristique de mesure | `0x2A5B` (CSC Measurement, notifications) |
+| Caractéristique de capacités | `0x2A5C` (CSC Feature, lecture). Bit 0 = roue, bit 1 = manivelle. Si seule la roue est annoncée, le capteur est en mode vitesse : refuser la connexion. |
 | Flags (octet 0) | bit0 = données de roue présentes, bit1 = données de manivelle présentes |
 | Données de roue (si bit0) | 4 octets (tours cumulés, uint32) + 2 octets (horodatage dernier événement, uint16) |
 | Données de manivelle (si bit1) | 2 octets (tours cumulés, uint16) + 2 octets (horodatage dernier événement, uint16) |
@@ -88,8 +90,10 @@ double? parseCadence(List<int> d) {
 - **Android 10 et 11** : `BLUETOOTH`, `BLUETOOTH_ADMIN`, et `ACCESS_FINE_LOCATION` à l’exécution. La localisation du téléphone doit rester activée pendant la recherche, sinon Android refuse le scan. Ces permissions s’arrêtent à l’API 30.
 - **iOS** : clé `NSBluetoothAlwaysUsageDescription` dans `Info.plist`.
 - Le **simulateur iOS ne gère pas le BLE** : tests réels sur un iPhone.
-- Package conseillé : `flutter_blue_plus`. Filtrer le scan sur le service `0x1816`.
-- Outil de debug conseillé avant de coder : l'app gratuite **nRF Connect** (vérifier que le capteur expose `0x1816`).
+- Package : `flutter_blue_plus`. Ne pas filtrer le scan radio sur `0x1816` : le KIT202 n’annonce pas ce service dans la trame, seulement après connexion. Scanner en mode legacy (PHY 1M), environ 20 s, et lister tous les appareils visibles, y compris ceux qui n’ont qu’une adresse. Sur Android, un `startScan` sans filtre doit recevoir `null`, pas une liste vide : sinon certaines piles ne renvoient rien.
+- Ne pas jumeler depuis l’écran Bluetooth du téléphone. Le système répond d’ouvrir l’application de l’appareil : la connexion GATT se fait dans l’app.
+- Vérifier `0x1816` / `0x2A5B` une fois connecté, puis `0x2A5C` pour écarter un capteur resté en mode vitesse.
+- Outil de debug utile : l'app gratuite **nRF Connect** (vérifier que le capteur expose `0x1816` après connexion).
 
 ---
 
@@ -230,16 +234,17 @@ Complément utile : si l'utilisateur peut noter (RPM, watts, allure, calories) s
 ## 7. Spécification de l'app
 
 ### 7.1 MVP
-- **Connexion** : écran de scan filtré sur `0x1816`, mémorisation du dernier capteur, reconnexion auto.
+- **Connexion** : dans Réglages, source « Capteur BLE ». Réveiller le capteur (pédale, LED rouge), lancer la recherche, choisir l’appareil (ex. `44885-1`). Pas de filtre radio `0x1816`. Contrôle `0x1816` / `0x2A5B` / `0x2A5C` après connexion. Mémorisation du dernier capteur, reconnexion auto. Sur Android 10 et 11, localisation autorisée et activée pendant le scan.
 - **Écran live (style PM5)** : durée, watts (grand), RPM, distance, vitesse, allure /1000 m, calories, watts moyens (réelle + façon PM5). Écran qui reste allumé pendant la séance.
 - **Séance** : démarrer / pause / terminer. Échantillonnage régulier (ex. 4 Hz pour le calcul, 1 Hz pour l'enregistrement).
 - **Historique** : liste des séances (date, durée, distance, watts moyens, kcal) + détail avec courbe de watts.
 - **Calibration** : écran d'édition de la table RPM → W (par niveau), ajustement `a`, `b` calculé automatiquement, indicateur de plage valide.
-- **Réglages** : niveau actif (22 par défaut), poids (mode PM5 79 kg ou perso), lissage, unités.
+- **Séance guidée** : blocs en temps, distance ou calories, avec un wattage à tenir ou une récupération. Le plan se répète, est mémorisé, et la sortie continue en roue libre une fois le dernier bloc atteint.
+- **Réglages** : niveau actif (22 par défaut), poids (mode PM5 79 kg ou perso), lissage, unités, source simulation ou capteur BLE.
 - **Mode simulation** : source de cadence factice (curseur ou scénario scripté) pour développer sans capteur.
 
 ### 7.2 Hors MVP
-Export CSV / FIT, synchro Strava, intervalles, partage, plusieurs profils.
+Export CSV / FIT, synchro Strava, partage, plusieurs profils.
 
 ### 7.3 Architecture conseillée (Flutter)
 
@@ -282,7 +287,7 @@ Principes :
 
 - **iPhone depuis le Mac, sans store** : Xcode + Apple ID gratuit (la doc Flutter confirme qu'un compte développeur personnel gratuit suffit pour tester sur appareil), mode développeur activé sur l'iPhone, `flutter run` en USB. Limite : l'app expire après ~7 jours, à réinstaller depuis le Mac ; nombre d'apps plafonné.
 - **Payer** : programme Apple Developer (~99 $/an) = TestFlight, pas d'expiration à 7 jours. Inutile au démarrage.
-- **Android** : `flutter build apk`, installation directe, gratuit, sans expiration. Un petit Android fixé au guidon est une bonne solution d'usage quotidien.
+- **Android** : `flutter build apk --release`, fichier `build/app/outputs/flutter-apk/app-release.apk`, installation directe, gratuit, sans expiration. `minSdk` 29. Un petit Android fixé au guidon est une bonne solution d'usage quotidien.
 
 ---
 

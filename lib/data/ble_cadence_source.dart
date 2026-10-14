@@ -14,6 +14,36 @@ class BleSensor {
   final int rssi;
 }
 
+bool bleDeviceIsListable({
+  required String advertisedName,
+  required String platformName,
+  required String id,
+}) {
+  return id.trim().isNotEmpty ||
+      advertisedName.trim().isNotEmpty ||
+      platformName.trim().isNotEmpty;
+}
+
+String bleDeviceLabel({
+  required String advertisedName,
+  required String platformName,
+  String id = '',
+}) {
+  final advertised = advertisedName.trim();
+  if (advertised.isNotEmpty) {
+    return advertised;
+  }
+  final platform = platformName.trim();
+  if (platform.isNotEmpty) {
+    return platform;
+  }
+  final remote = id.trim();
+  if (remote.isNotEmpty) {
+    return remote;
+  }
+  return 'Capteur';
+}
+
 String bleScanErrorMessage(String? description) {
   final text = (description ?? '').toLowerCase();
   if (text.contains('location')) {
@@ -55,6 +85,9 @@ class BleCadenceSource implements CadenceSource {
 
   static final _cscService = Guid('1816');
   static final _cscMeasurement = Guid('2A5B');
+  static final _cscFeature = Guid('2A5C');
+  static const _speedModeMessage =
+      'Ce capteur est en mode vitesse (LED verte). Retire et remets la pile pour passer en cadence (LED rouge).';
 
   @override
   Stream<CadenceSample> get samples => _samples.stream;
@@ -93,39 +126,50 @@ class BleCadenceSource implements CadenceSource {
   }
 
   Future<void> scan({
-    Duration timeout = const Duration(seconds: 8),
+    Duration timeout = const Duration(seconds: 20),
     void Function(List<BleSensor> devices)? onDevices,
   }) async {
     _configureLogging();
     await _ensureAdapterOn();
     _found.clear();
     onDevices?.call(const []);
-    final subscription = FlutterBluePlus.onScanResults.listen((results) {
+    void absorb(List<ScanResult> results) {
       for (final result in results) {
-        final advertised = result.advertisementData.advName.trim();
-        final platformName = result.device.platformName.trim();
-        final name = advertised.isNotEmpty
-            ? advertised
-            : platformName.isNotEmpty
-            ? platformName
-            : 'Capteur';
+        final advertised = result.advertisementData.advName;
+        final platformName = result.device.platformName;
+        final id = result.device.remoteId.str;
+        if (!bleDeviceIsListable(
+          advertisedName: advertised,
+          platformName: platformName,
+          id: id,
+        )) {
+          continue;
+        }
         _upsert(
           BleSensor(
-            id: result.device.remoteId.str,
-            name: name,
+            id: id,
+            name: bleDeviceLabel(
+              advertisedName: advertised,
+              platformName: platformName,
+              id: id,
+            ),
             rssi: result.rssi,
           ),
         );
       }
       onDevices?.call(List.unmodifiable(_found));
-    });
+    }
+
+    final subscription = FlutterBluePlus.onScanResults.listen(absorb);
     try {
       await FlutterBluePlus.startScan(
-        withServices: [_cscService],
         timeout: timeout,
         androidUsesFineLocation: false,
+        androidLegacy: true,
+        continuousUpdates: true,
       );
       await FlutterBluePlus.isScanning.where((scanning) => !scanning).first;
+      absorb(FlutterBluePlus.lastScanResults);
     } on FlutterBluePlusException catch (error) {
       throw BleCadenceException(bleScanErrorMessage(error.description));
     } finally {
@@ -154,10 +198,6 @@ class BleCadenceSource implements CadenceSource {
       }
       _listenForDrop(device, generation);
       final measurement = await _findMeasurement(device);
-      if (measurement == null) {
-        _fail(generation, 'Ce capteur n’expose pas la cadence (CSC).');
-        return;
-      }
       _tracker.reset();
       _values = measurement.onValueReceived.listen((value) {
         if (generation != _generation || !_wantRunning || _samples.isClosed) {
@@ -203,21 +243,38 @@ class BleCadenceSource implements CadenceSource {
     });
   }
 
-  Future<BluetoothCharacteristic?> _findMeasurement(
+  Future<BluetoothCharacteristic> _findMeasurement(
     BluetoothDevice device,
   ) async {
     final services = await device.discoverServices();
+    BluetoothCharacteristic? measurement;
+    BluetoothCharacteristic? feature;
     for (final service in services) {
       if (service.uuid != _cscService) {
         continue;
       }
       for (final characteristic in service.characteristics) {
         if (characteristic.uuid == _cscMeasurement) {
-          return characteristic;
+          measurement = characteristic;
+        } else if (characteristic.uuid == _cscFeature) {
+          feature = characteristic;
         }
       }
     }
-    return null;
+    if (measurement == null) {
+      throw BleCadenceException('Ce capteur n’expose pas la cadence (CSC).');
+    }
+    if (feature != null && feature.properties.read) {
+      try {
+        final value = await feature.read();
+        if (!cscFeatureSupportsCrank(value)) {
+          throw BleCadenceException(_speedModeMessage);
+        }
+      } on BleCadenceException {
+        rethrow;
+      } catch (_) {}
+    }
+    return measurement;
   }
 
   void _onClock() {

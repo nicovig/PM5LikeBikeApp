@@ -272,7 +272,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Seuls les capteurs qui annoncent le service cadence (1816) apparaissent.',
+              'Tourne la pédale plusieurs fois pour le réveiller, puis choisis-le ici. La LED doit clignoter en rouge (cadence). Une LED verte veut dire mode vitesse : retire et remets la pile. Ne l’associe pas dans les réglages Bluetooth du téléphone.',
               style: TextStyle(color: Pm5Colors.muted, fontSize: 13),
             ),
             if (_scanError != null)

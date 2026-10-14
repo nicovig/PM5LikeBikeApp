@@ -138,4 +138,11 @@ void main() {
     );
     expect(tracker.onClock(start.add(const Duration(seconds: 3))), 0);
   });
+
+  test('a speed-only CSC feature does not support crank cadence', () {
+    expect(cscFeatureSupportsCrank(const [0x01, 0x00]), isFalse);
+    expect(cscFeatureSupportsCrank(const [0x02, 0x00]), isTrue);
+    expect(cscFeatureSupportsCrank(const [0x03, 0x00]), isTrue);
+    expect(cscFeatureSupportsCrank(const []), isTrue);
+  });
 }

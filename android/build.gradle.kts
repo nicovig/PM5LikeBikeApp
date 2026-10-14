@@ -43,6 +43,40 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+subprojects {
+    if (name != "flutter_blue_plus") {
+        return@subprojects
+    }
+    tasks.matching { it.name == "preBuild" }.configureEach {
+        doFirst {
+            val source =
+                file(
+                    "src/main/java/com/lib/flutter_blue_plus/FlutterBluePlusPlugin.java",
+                )
+            if (!source.exists()) {
+                return@doFirst
+            }
+            val text = source.readText()
+            val original = "scanner.startScan(filters, settings, getScanCallback());"
+            if (!text.contains(original) || text.contains("filters.isEmpty()")) {
+                return@doFirst
+            }
+            source.writeText(
+                text.replace(
+                    original,
+                    """
+                    if (filters.isEmpty()) {
+                        scanner.startScan(null, settings, getScanCallback());
+                    } else {
+                        scanner.startScan(filters, settings, getScanCallback());
+                    }
+                    """.trimIndent(),
+                ),
+            )
+        }
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

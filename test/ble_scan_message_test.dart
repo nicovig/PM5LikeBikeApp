@@ -24,4 +24,35 @@ void main() {
       'Recherche impossible. Autorisez le Bluetooth, puis réessayez.',
     );
   });
+
+  test('a named sensor is listed even when it does not advertise cadence', () {
+    expect(
+      bleDeviceIsListable(
+        advertisedName: '44885-1',
+        platformName: '',
+        id: 'AA:BB:CC:DD:EE:FF',
+      ),
+      isTrue,
+    );
+    expect(
+      bleDeviceLabel(advertisedName: '44885-1', platformName: ''),
+      '44885-1',
+    );
+    expect(
+      bleDeviceIsListable(
+        advertisedName: '',
+        platformName: '',
+        id: 'AA:BB:CC:DD:EE:FF',
+      ),
+      isTrue,
+    );
+    expect(
+      bleDeviceLabel(
+        advertisedName: '',
+        platformName: '',
+        id: 'AA:BB:CC:DD:EE:FF',
+      ),
+      'AA:BB:CC:DD:EE:FF',
+    );
+  });
 }

@@ -1,5 +1,18 @@
 import 'package:pm5_bike/core/pm5_constants.dart';
 
+bool cscFeatureSupportsCrank(List<int> data) {
+  if (data.length < 2) {
+    return true;
+  }
+  final value = data[0] | (data[1] << 8);
+  final wheel = (value & 0x01) != 0;
+  final crank = (value & 0x02) != 0;
+  if (!wheel && !crank) {
+    return true;
+  }
+  return crank;
+}
+
 class CscPacket {
   const CscPacket({
     required this.rpm,
